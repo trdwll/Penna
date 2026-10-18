@@ -1,0 +1,194 @@
+# Builds Penna for Windows and Linux on every push to the `release` branch
+# (development happens on `main`), then tags the commit `v<version>` and
+# publishes a GitHub release with the installers, the Linux packages and the
+# portable copies.
+#
+# Before merging `main` into `release`, bump the version in package.json,
+# src-tauri/Cargo.toml and src-tauri/tauri.conf.json; the three must agree.
+# A push whose version already has a tag stops before building anything.
+
+name: Release
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch: # run it again by hand (from the release branch only)
+
+permissions:
+  contents: write # create the tag and the release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tag: ${{ steps.read.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # all tags, to see whether this version was released already
+
+      - name: Read the version and make sure it's new
+        id: read
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/release" ]; then
+            echo "::error::Releases are made from the release branch, not $GITHUB_REF_NAME."
+            exit 1
+          fi
+          app=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          npm=$(node -p "require('./package.json').version")
+          cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+          echo "tauri.conf.json $app, package.json $npm, Cargo.toml $cargo"
+          if [ "$app" != "$npm" ] || [ "$app" != "$cargo" ]; then
+            echo "::error::The version numbers differ (tauri.conf.json $app, package.json $npm, Cargo.toml $cargo). Make them the same and push again."
+            exit 1
+          fi
+          tag="v$app"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag is already released. Bump the version for a new release."
+            exit 1
+          fi
+          echo "version=$app" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build for ${{ matrix.name }}
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            bundles: nsis
+          - name: Linux
+            # The oldest supported Ubuntu, so the packages run on older systems too.
+            os: ubuntu-22.04
+            bundles: deb,rpm,appimage
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install the Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev pkg-config patchelf file
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Build
+        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+        env:
+          # linuxdeploy (AppImage) can't mount itself on the runner; this unpacks it instead.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+
+      - name: Collect the Windows packages
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-release | Out-Null
+          # Only this version's files, in case the build cache brought older ones along.
+          Copy-Item "src-tauri/target/release/bundle/nsis/*_${env:VERSION}_*-setup.exe" dist-release/
+
+          # Portable: the program, plus the `portable` file that keeps its settings in a `data` folder beside it.
+          $name = "Penna_${env:VERSION}_x64-portable"
+          New-Item -ItemType Directory -Force $name | Out-Null
+          Copy-Item src-tauri/target/release/penna.exe "$name/Penna.exe"
+          Set-Content -Encoding utf8 "$name/portable" "This file makes Penna keep its settings in the data folder next to it. Delete it to use the usual place in your user profile."
+          Set-Content -Encoding utf8 "$name/README.txt" @"
+          Penna ${env:VERSION}, portable
+
+          Run Penna.exe. Nothing is installed: settings, the last vault and the notes you
+          opened recently stay in the "data" folder next to it, so the whole folder can live
+          on a USB stick. Your notes stay in your vault folder, wherever you keep it.
+
+          Penna uses Microsoft Edge WebView2, which comes with Windows 10 and 11.
+          "@
+          Compress-Archive -Path $name -DestinationPath "dist-release/$name.zip"
+          Get-ChildItem dist-release
+
+      - name: Collect the Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist-release
+          # Only this version's files, in case the build cache brought older ones along.
+          cp src-tauri/target/release/bundle/deb/*"_${VERSION}_"*.deb dist-release/
+          cp src-tauri/target/release/bundle/rpm/*"-${VERSION}-"*.rpm dist-release/
+          # The AppImage is the portable Linux copy: one file that runs without installing.
+          cp src-tauri/target/release/bundle/appimage/*"_${VERSION}_"*.AppImage dist-release/
+          ls -l dist-release
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: penna-${{ matrix.name }}
+          path: dist-release/*
+          if-no-files-found: error
+
+  release:
+    name: Tag and publish
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: packages
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Write the release notes
+        run: |
+          cat > notes.md <<EOF
+          ## Downloads
+
+          | | Windows | Linux |
+          |---|---|---|
+          | **Install** | \`Penna_${VERSION}_x64-setup.exe\` | \`.deb\` (Debian, Ubuntu) or \`.rpm\` (Fedora, openSUSE) |
+          | **Portable** | \`Penna_${VERSION}_x64-portable.zip\`: unzip it and run \`Penna.exe\`. Its settings stay in the \`data\` folder beside it. | \`.AppImage\`: make it executable (\`chmod +x\`) and run it. Start it once with \`--appimage-portable-home\` to keep its settings beside it too. |
+
+          Windows may say the installer is from an unknown publisher, because it isn't signed yet. Choose **More info**, then **Run anyway**.
+          Penna uses WebView2 on Windows (built into Windows 10 and 11) and WebKitGTK 4.1 on Linux (the \`.deb\` and \`.rpm\` install it for you).
+
+          \`SHA256SUMS.txt\` lists a checksum for every file.
+          EOF
+
+      - name: Tag this commit and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" packages/* \
+            --target "$GITHUB_SHA" \
+            --title "Penna $VERSION" \
+            --notes-file notes.md \
+            --generate-notes \
+            --latest

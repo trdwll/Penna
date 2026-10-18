@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+/* Fonts are bundled with the app (no network): serif for writing, grotesk for UI, mono for Source. */
+@import "@fontsource-variable/newsreader/opsz.css";
+@import "@fontsource-variable/newsreader/opsz-italic.css";
+@import "@fontsource-variable/hanken-grotesk/wght.css";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/500.css";
+
+/*
+ * Margin design tokens.
+ *
+ * Tailwind v4 turns each `--color-*` / `--font-*` into utilities (bg-bg,
+ * text-ink-3, border-rule, font-serif, ...). The CodeMirror theme reads the
+ * same variables, so the editor and the app chrome always match.
+ * `static` emits every variable, including ones only TypeScript references.
+ *
+ * Light is the default. Dark follows Windows unless Settings picks a theme
+ * (`data-theme` on <html>). Writing font, size and column width are set by
+ * Settings as `--writing-font`, `--writing-size` and `--column-width`.
+ */
+@theme static {
+  --font-sans: "Hanken Grotesk Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Newsreader Variable", Georgia, "Times New Roman", serif;
+  --font-mono: "DM Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --color-bg: #fafaf9;
+  --color-hover: #f0f0ee;
+  --color-rule: #e3e3df;
+  --color-ink: #1b1c1e;
+  --color-ink-2: #4f5257;
+  --color-ink-3: #686c71;
+  --color-faint: #a3a6aa;
+  --color-accent: #2d5a9b;
+  --color-accent-soft: rgb(45 90 155 / 0.12);
+  --color-ins-strong: rgb(45 90 155 / 0.24);
+  --color-del: #9a5420;
+  --color-del-soft: rgb(154 84 32 / 0.09);
+  --color-del-strong: rgb(154 84 32 / 0.2);
+  --color-ok: #2e7457;
+  --color-danger: #b3362c;
+  --color-code: #f0f0ee;
+  --color-selection: rgb(45 90 155 / 0.2);
+  /* ==highlight== : a highlighter stroke, warm so it never reads as a selection. */
+  --color-mark: rgb(240 196 64 / 0.42);
+  --color-tooltip: #1b1c1e;
+  --color-on-tooltip: #fafaf9;
+}
+
+/* The dark palette: when Windows is dark (unless Settings says Light), or when Settings says Dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #141517;
+    --color-hover: #1e2023;
+    --color-rule: #2b2d31;
+    --color-ink: #e9e7e3;
+    --color-ink-2: #bbb9b4;
+    --color-ink-3: #97958f;
+    --color-faint: #5e6064;
+    --color-accent: #93b4e6;
+    --color-accent-soft: rgb(147 180 230 / 0.15);
+    --color-ins-strong: rgb(147 180 230 / 0.28);
+    --color-del: #e3a06b;
+    --color-del-soft: rgb(227 160 107 / 0.1);
+    --color-del-strong: rgb(227 160 107 / 0.22);
+    --color-ok: #86c7a6;
+    --color-danger: #f08a80;
+    --color-code: #1e2023;
+    --color-selection: rgb(147 180 230 / 0.28);
+    --color-mark: rgb(230 186 60 / 0.38);
+    --color-tooltip: #e9e7e3;
+    --color-on-tooltip: #141517;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #141517;
+  --color-hover: #1e2023;
+  --color-rule: #2b2d31;
+  --color-ink: #e9e7e3;
+  --color-ink-2: #bbb9b4;
+  --color-ink-3: #97958f;
+  --color-faint: #5e6064;
+  --color-accent: #93b4e6;
+  --color-accent-soft: rgb(147 180 230 / 0.15);
+  --color-ins-strong: rgb(147 180 230 / 0.28);
+  --color-del: #e3a06b;
+  --color-del-soft: rgb(227 160 107 / 0.1);
+  --color-del-strong: rgb(227 160 107 / 0.22);
+  --color-ok: #86c7a6;
+  --color-danger: #f08a80;
+  --color-code: #1e2023;
+  --color-selection: rgb(147 180 230 / 0.28);
+  --color-mark: rgb(230 186 60 / 0.38);
+  --color-tooltip: #e9e7e3;
+  --color-on-tooltip: #141517;
+}
+
+/* Dragging notes or folders in the Notes panel. */
+body.cursor-grabbing,
+body.cursor-grabbing * {
+  cursor: grabbing !important;
+}
+
+/* Export as PDF and Print: only the note, in print layout (see lib/exportNote.ts). */
+#print-root {
+  display: none;
+}
+@media print {
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  body > :not(#print-root) {
+    display: none !important;
+  }
+  #print-root {
+    display: block;
+  }
+}
+
+/* Settings → Appearance → "Show Markdown marks in the margin" off. */
+.hide-margin-marks .cm-hanging-mark,
+.hide-margin-marks .cm-hanging-time {
+  display: none;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg font-sans text-ink antialiased;
+    font-size: 14px;
+    /* A desktop app: the window never scrolls, only panes do. */
+    overflow: hidden;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-rule) transparent;
+  }
+
+  ::selection {
+    background: var(--color-selection);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+
+  button {
+    cursor: default;
+  }
+}
