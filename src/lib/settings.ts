@@ -2,7 +2,7 @@
  * Settings, in two places:
  *
  * - **App settings** stay on this PC (localStorage): theme, writing font,
- *   editor behavior, device name.
+ *   editor behavior, device name, update checks.
  * - **Vault settings** live in the vault as `.penna/settings.json`, so they
  *   travel with the notes to every device: sync behavior, daily notes, attachments.
  *
@@ -25,6 +25,8 @@ export interface AppSettings {
   marginMarks: boolean;
   /** Shown in History so machines can be told apart. Empty = the computer's name. */
   deviceName: string;
+  /** Ask GitHub once a day whether a newer Penna is out. */
+  checkUpdates: boolean;
 }
 
 export interface VaultSettings {
@@ -75,6 +77,7 @@ export const DEFAULT_APP: AppSettings = {
   theme: "system",
   marginMarks: true,
   deviceName: "",
+  checkUpdates: true,
 };
 
 export const DEFAULT_VAULT: VaultSettings = {

@@ -11,7 +11,7 @@ src/                         Frontend (webview)
 ├── services/tauri.ts        Typed IPC wrappers, events, window controls, dialogs
 ├── editor/                  CodeMirror: Preview decorations, tables, embeds, insert menu, conflicts, Changes
 ├── components/              Views and panels (Notes, Search, Tags, Today, History, Settings, dialogs)
-└── lib/                     Pure helpers: paths, dates, settings, tags, templates, export, diffs
+└── lib/                     Helpers: paths, dates, settings, tags, templates, export, diffs, update check
 src-tauri/                   Backend (Rust)
 ├── tauri.conf.json          Frameless window, CSP, bundle
 ├── capabilities/            Window, dialog and opener permissions
@@ -52,6 +52,12 @@ images; it only serves files inside the open vault and sends SVGs with a sandbox
 **Settings.** App settings live in the webview's local storage (this PC); vault settings live in
 `.penna/settings.json` and sync with the notes. A file named `portable` next to the Windows exe moves the webview's
 data into a `data` folder beside it.
+
+**Updates.** `src/lib/updates.ts` fetches `api.github.com/repos/trdwll/Penna/releases/latest` (the one outside
+host in the CSP's `connect-src`) 5 s after start and then at most once a day, compares its tag with the app's version
+in semver order, and remembers the answer in local storage. It only links to the release page; nothing downloads or
+installs. GitHub answers 404 while there are no releases or the repository is private, which the app shows as "No
+releases on GitHub yet". Settings → General turns the automatic check off; "Check now" and the command still work.
 
 ## Sync
 

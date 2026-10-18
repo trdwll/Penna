@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { appWindow, type GitStatus } from "../services/tauri";
 import type { SaveStatus, ViewMode } from "../editor/Editor";
+import type { Release } from "../lib/updates";
+import UpdateNotice from "./UpdateNotice";
 import { ChangesIcon, ChevronDown, CloseGlyph, MaximizeGlyph, MinimizeGlyph, NoteIcon, RestoreGlyph, SyncIcon } from "./icons";
 
 interface TitleBarProps {
@@ -24,6 +26,8 @@ interface TitleBarProps {
   onInitRepo: () => void;
   /** A sync stopped to ask: how many places still need a choice. */
   paused?: { left: number } | null;
+  /** A newer Penna on GitHub. */
+  update?: { release: Release; current: string; onDownload: () => void; onSkip: () => void } | null;
 }
 
 const SAVE_LABEL: Record<SaveStatus, string> = {
@@ -39,7 +43,7 @@ const SAVE_LABEL: Record<SaveStatus, string> = {
  * window API.
  */
 export default function TitleBar(props: TitleBarProps) {
-  const { vaultName, onSwitchVault, hasNote, saveStatus } = props;
+  const { vaultName, onSwitchVault, hasNote, saveStatus, update } = props;
 
   return (
     <header data-tauri-drag-region className="flex h-11 shrink-0 items-center gap-3 pl-3.5 select-none">
@@ -61,8 +65,11 @@ export default function TitleBar(props: TitleBarProps) {
       {hasNote && <ViewControls {...props} />}
 
       <div data-tauri-drag-region className="flex flex-1 basis-0 items-center justify-end gap-3">
+        {update && <UpdateNotice {...update} />}
         {saveStatus && (
-          <span className={`text-[13px] ${saveStatus === "error" ? "text-danger" : "text-ink-3"}`}>{SAVE_LABEL[saveStatus]}</span>
+          <span className={`text-[13px] whitespace-nowrap ${saveStatus === "error" ? "text-danger" : "text-ink-3"}`}>
+            {SAVE_LABEL[saveStatus]}
+          </span>
         )}
         {vaultName && <SyncPill {...props} />}
         <WindowControls />
@@ -171,7 +178,7 @@ function SyncPill({ git, syncBusy, onSync, onInitRepo, paused }: TitleBarProps) 
             ? "Sync is waiting for you to pick what to keep. Click to go to the next place."
             : "Every place has a choice. Click to finish the sync."
         }
-        className="flex h-[30px] items-center gap-2.5 rounded-full border border-rule py-0 pr-1.5 pl-3 text-[13px] text-ink-2 hover:border-ink-3/40"
+        className="flex h-[30px] shrink-0 items-center gap-2.5 rounded-full border border-rule py-0 pr-1.5 pl-3 text-[13px] whitespace-nowrap text-ink-2 hover:border-ink-3/40"
       >
         <span className="flex items-center gap-[7px]">
           <span className="size-[7px] rounded-full bg-del" />
@@ -191,7 +198,7 @@ function SyncPill({ git, syncBusy, onSync, onInitRepo, paused }: TitleBarProps) 
         onClick={onInitRepo}
         disabled={syncBusy}
         title="Start tracking this vault's history with Git"
-        className="flex h-[30px] items-center gap-2 rounded-full border border-rule px-3 text-[13px] text-ink-2 hover:bg-hover"
+        className="flex h-[30px] shrink-0 items-center gap-2 rounded-full border border-rule px-3 text-[13px] whitespace-nowrap text-ink-2 hover:bg-hover"
       >
         <SyncIcon className="size-3.5" />
         Set up history
@@ -213,7 +220,7 @@ function SyncPill({ git, syncBusy, onSync, onInitRepo, paused }: TitleBarProps) 
       onClick={onSync}
       disabled={syncBusy}
       title={`${details}\n${git.hasRemote ? "Save a version, get changes, then send yours (Ctrl+Shift+S)" : "Save a version of every changed note"}`}
-      className="flex h-[30px] items-center gap-2.5 rounded-full border border-rule py-0 pr-1.5 pl-3 text-[13px] text-ink-2 hover:border-ink-3/40"
+      className="flex h-[30px] shrink-0 items-center gap-2.5 rounded-full border border-rule py-0 pr-1.5 pl-3 text-[13px] whitespace-nowrap text-ink-2 hover:border-ink-3/40"
     >
       <span className="flex items-center gap-[7px]">
         <span className={`size-[7px] rounded-full ${changes > 0 ? "bg-accent" : "bg-ok"}`} />

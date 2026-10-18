@@ -99,6 +99,14 @@ export const SyncIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** An arrow into a tray: a new version to download. */
+export const UpdateIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 2.5v7M5 6.5l3 3 3-3" />
+    <path d="M3 10.5v3h10v-3" />
+  </Icon>
+);
+
 /** ± : the Changes toggle. */
 export const ChangesIcon = (p: IconProps) => (
   <Icon strokeWidth={1.6} {...p}>

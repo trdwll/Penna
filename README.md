@@ -3,6 +3,11 @@
 A local-first Markdown notebook. Your notes are plain `.md` files in a folder you choose, every version is kept
 with Git, and sync goes to a Git remote you control. For Windows and Linux.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/penna-dark.png">
+  <img src="docs/images/penna-light.png" alt="Penna with a note open in Preview: a table, a checklist, highlighted text and links, with the note's headings, backlinks and history in the margin">
+</picture>
+
 ## Download
 
 Get the latest build from [Releases](../../releases/latest).
@@ -13,6 +18,9 @@ Get the latest build from [Releases](../../releases/latest).
 | Portable | `Penna_<version>_x64-portable.zip` (settings stay in its `data` folder) | `.AppImage` |
 
 The builds aren't signed yet, so Windows may warn about an unknown publisher: choose **More info → Run anyway**.
+
+Once a day Penna asks GitHub whether a newer release is out and, if so, shows **Update** in the title bar with a
+link to it. Nothing installs itself. Turn the check off in Settings → General.
 
 ## What it does
 

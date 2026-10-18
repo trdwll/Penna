@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { getVersion } from "@tauri-apps/api/app";
 import * as api from "../services/tauri";
 import type { GitStatus, Identity } from "../services/tauri";
+import { relativeTime } from "../lib/format";
 import { formatDate, type AppSettings, type VaultPatch, type VaultSettings } from "../lib/settings";
+import type { Updates } from "../lib/updates";
 import { UnusedFilesDialog, fileSize, type UnusedFile } from "./NoteDialogs";
 import { Segmented } from "./TitleBar";
 import { ChevronDown, SyncIcon } from "./icons";
@@ -22,6 +23,9 @@ interface SettingsViewProps {
   notify: (text: string, tone?: "info" | "error") => void;
   /** Move attachments to the Recycle Bin (Attachments → Files no note links to). */
   onDeleteFiles: (paths: string[]) => Promise<void>;
+  updates: Updates;
+  /** Open a release page in the browser. */
+  onOpenRelease: (url: string) => void;
 }
 
 const SECTIONS = [
@@ -122,13 +126,10 @@ function SettingsPage({
   defaultDevice,
   notify,
   onDeleteFiles,
+  updates,
+  onOpenRelease,
 }: SettingsViewProps) {
-  const [version, setVersion] = useState("");
-  useEffect(() => {
-    getVersion()
-      .then(setVersion)
-      .catch(() => setVersion(""));
-  }, []);
+  const version = updates.current;
   const today = new Date();
 
   return (
@@ -160,6 +161,13 @@ function SettingsPage({
             ]}
           />
         </Row>
+        <Row
+          title="Check for updates"
+          description="Once a day, Penna asks GitHub whether a newer version is out. Nothing about you or your notes is sent."
+        >
+          <Switch label="Check for updates" checked={app.checkUpdates} onChange={(v) => onApp({ checkUpdates: v })} />
+        </Row>
+        <UpdateRow updates={updates} onOpenRelease={onOpenRelease} />
       </Section>
 
       <Section id="editor" number="02" title="Editor" scope="This PC">
@@ -606,6 +614,54 @@ function IdentityRow({ notify }: { notify: SettingsViewProps["notify"] }) {
           aria-label="Email"
           className="h-[34px] w-52 rounded-lg border border-rule bg-bg px-3 outline-none focus:border-accent"
         />
+      </span>
+    </Row>
+  );
+}
+
+/** General → this version: what the last check found, and "Check now" (works with automatic checks off too). */
+function UpdateRow({ updates, onOpenRelease }: Pick<SettingsViewProps, "updates" | "onOpenRelease">) {
+  const { current, latest, available, checkedAt, checking, error, check } = updates;
+  // Re-render now and then so "checked 5 minutes ago" stays true.
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const checked = checkedAt ? ` Checked ${relativeTime(checkedAt)}.` : "";
+  const status = checking
+    ? "Checking GitHub…"
+    : error
+      ? `Couldn't check: ${error}`
+      : available
+        ? `Penna ${available.version} is out.`
+        : checkedAt === null
+          ? "Not checked yet."
+          : latest
+            ? `This is the newest version.${checked}`
+            : `No releases on GitHub yet.${checked}`;
+
+  return (
+    <Row title={current ? `Penna ${current}` : "This version"} description={<span data-update-status>{status}</span>}>
+      <span className="flex items-center gap-2">
+        {available && (
+          <button
+            type="button"
+            onClick={() => onOpenRelease(available.url)}
+            className="h-[34px] rounded-lg bg-ink px-3.5 text-[13px] font-medium text-bg hover:opacity-90"
+          >
+            Download {available.version}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => void check()}
+          disabled={checking}
+          className="h-[34px] rounded-lg border border-rule px-3.5 hover:bg-hover disabled:opacity-50"
+        >
+          {checking ? "Checking…" : "Check now"}
+        </button>
       </span>
     </Row>
   );

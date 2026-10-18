@@ -56,6 +56,7 @@ import {
   shortTime,
 } from "./lib/format";
 import { useDebouncedCallback, useLatest } from "./lib/hooks";
+import { useUpdates } from "./lib/updates";
 import { extractHeadings } from "./lib/outline";
 import {
   DEFAULT_VAULT,
@@ -332,6 +333,21 @@ export default function App() {
   }, []);
 
   const updateApp = useCallback((patch: Partial<AppSettings>) => setAppSettings((s) => ({ ...s, ...patch })), []);
+
+  // ---- Updates (a newer release on GitHub) ----------------------------------
+
+  const updates = useUpdates(appSettings.checkUpdates);
+  const openRelease = useCallback(
+    (url: string) => void api.openExternal(url).catch((err) => showError(err, "Couldn't open the release page")),
+    [showError],
+  );
+  /** "Check for updates" from the command list: says what it found, since nothing else might show it. */
+  const checkForUpdates = async () => {
+    const found = await updates.check();
+    if (found.error) notify(`Couldn't check for updates: ${found.error}`, "error");
+    else if (found.available) notify(`Penna ${found.available.version} is out. Settings → General has the download.`);
+    else notify(found.latest ? `Penna ${updates.current} is the newest version.` : "No releases on GitHub yet.");
+  };
 
   const persistVaultSettings = useDebouncedCallback((settings: VaultSettings) => {
     api.writeVaultSettings(JSON.stringify(settings, null, 2) + "\n").catch((err) => showError(err, "Couldn't save vault settings"));
@@ -1840,6 +1856,7 @@ export default function App() {
       editing && { id: "print", label: "Print…", run: () => void exportNote(note.path, "print") },
       editing && { id: "delete", label: "Delete this note…", run: () => requestDelete(note.path) },
       { id: "vault", label: "Open another vault…", run: () => void chooseVault() },
+      { id: "updates", label: "Check for updates", run: () => void checkForUpdates() },
       theme !== "dark" && { id: "dark", label: "Use the dark theme", run: () => updateApp({ theme: "dark" }) },
       theme !== "light" && { id: "light", label: "Use the light theme", run: () => updateApp({ theme: "light" }) },
       theme !== "system" && { id: "system", label: "Match the Windows theme", run: () => updateApp({ theme: "system" }) },
@@ -2201,6 +2218,14 @@ export default function App() {
         paused={merge ? { left: pausedLeft } : null}
         besideOn={!!beside}
         onToggleBeside={note && !inHistory && !fullView ? toggleBeside : undefined}
+        update={
+          updates.notice && {
+            release: updates.notice,
+            current: updates.current,
+            onDownload: () => openRelease(updates.notice!.url),
+            onSkip: () => updates.skip(updates.notice!.version),
+          }
+        }
       />
 
       <div className="flex min-h-0 flex-1">
@@ -2242,6 +2267,8 @@ export default function App() {
                 defaultDevice={defaultDevice}
                 notify={notify}
                 onDeleteFiles={deleteFiles}
+                updates={updates}
+                onOpenRelease={openRelease}
               />
             ) : (
               <>

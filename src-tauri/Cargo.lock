@@ -2596,7 +2596,7 @@ dependencies = [
 
 [[package]]
 name = "penna"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "git2",
  "notify-debouncer-mini",
