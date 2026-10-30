@@ -18,6 +18,7 @@ src-tauri/                   Backend (Rust)
 └── src/
     ├── lib.rs               AppState, #[tauri::command] handlers, builder, portable mode
     ├── vault.rs             Tree scan, path validation, atomic I/O, rename/delete, backlinks
+    ├── order.rs             Notes and folders arranged by hand (.penna/order.json)
     ├── links.rs             Finding and rewriting links (wiki + relative Markdown)
     ├── attachments.rs       Saving, importing and opening attachments; the penna: scheme
     ├── git.rs               Status, commit, pull/push/sync, merges, history
@@ -50,7 +51,9 @@ images; it only serves files inside the open vault and sends SVGs with a sandbox
 `vault:changed` with `{ paths }`.
 
 **Settings.** App settings live in the webview's local storage (this PC); vault settings live in
-`.penna/settings.json` and sync with the notes. A file named `portable` next to the Windows exe moves the webview's
+`.penna/settings.json` and sync with the notes, as does `.penna/order.json`: for each folder arranged by hand,
+the names in it in order (`scan_tree` applies it, so links resolve in the same order the sidebar shows; names not
+listed follow A to Z; renames, moves and deletes in Penna keep it current). A file named `portable` next to the Windows exe moves the webview's
 data into a `data` folder beside it.
 
 **Updates.** `src/lib/updates.ts` fetches `api.github.com/repos/trdwll/Penna/releases/latest` (the one outside

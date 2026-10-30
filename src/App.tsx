@@ -1751,6 +1751,24 @@ export default function App() {
     [moveNote, moveFolder, showError],
   );
 
+  /** Arrange a folder by hand in the Notes panel (no names: back to A to Z). `moving` comes from another folder first. */
+  const arrange = useCallback(
+    async (folder: string, names: string[], moving?: PanelItem) => {
+      try {
+        if (moving && folderOf(moving.path) !== folder) {
+          const to = moveTarget(moving.path, folder);
+          await (moving.folder ? moveFolder(moving.path, to) : moveNote(moving.path, to));
+        }
+        await api.setOrder(folder, names);
+        await refreshTree();
+        void refreshGit();
+      } catch (err) {
+        showError(err, moving ? `Couldn't move “${basename(moving.path)}”` : "Couldn't change the order");
+      }
+    },
+    [moveNote, moveFolder, refreshTree, refreshGit, showError],
+  );
+
   /** Ask first; the dialog says how many notes link to it. */
   const requestDelete = useCallback((path: string) => {
     setDeleting({ path, links: null });
@@ -2080,7 +2098,7 @@ export default function App() {
   };
 
   const menuFor = useCallback(
-    (item: PanelItem): MenuItem[] =>
+    (item: PanelItem, extra: MenuItem[] = []): MenuItem[] =>
       item.folder
         ? [
             {
@@ -2093,12 +2111,14 @@ export default function App() {
             { label: "New from template here…", onSelect: () => startFromTemplate(item.path) },
             { label: "Rename", hint: "F2", onSelect: () => startRename(item) },
             { label: "Move to…", onSelect: () => setMoving(item) },
+            ...extra,
             { label: "Delete…", danger: true, onSelect: () => requestDeleteFolder(item.path) },
           ]
         : [
             { label: "Open beside", hint: "Ctrl click", onSelect: () => void openBeside(item.path) },
             { label: "Rename", hint: "F2", onSelect: () => startRename(item) },
             { label: "Move to…", onSelect: () => setMoving(item) },
+            ...extra,
             { label: "Export as HTML…", onSelect: () => void exportNote(item.path, "html") },
             { label: "Export as PDF…", onSelect: () => void exportNote(item.path, "pdf") },
             { label: "Print…", onSelect: () => void exportNote(item.path, "print") },
@@ -2306,6 +2326,7 @@ export default function App() {
                     onDelete={requestDeleteItem}
                     menuFor={menuFor}
                     onDrop={dropInto}
+                    onArrange={(folder, names, moving) => void arrange(folder, names, moving)}
                     paused={pausedNotes ?? undefined}
                     findRef={findRef}
                   />

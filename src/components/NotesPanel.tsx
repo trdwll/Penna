@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type Ref } from "react";
 import { errorMessage, type DirNode, type TreeNode } from "../services/tauri";
 import { basename, folderOf, notePaths, noteTitle } from "../lib/format";
-import { dailyDateOf, displayTitle } from "../lib/daily";
+import { displayTitle } from "../lib/daily";
+import { placeNames, shiftNames, shown, usualOrder, type Place } from "../lib/order";
 import Menu, { type MenuAnchor, type MenuItem } from "./Menu";
 import type { PausedNote } from "./SyncPaused";
 import { CheckIcon, ChevronDown, ChevronRight, PlusIcon, SearchIcon } from "./icons";
@@ -31,10 +32,12 @@ interface NotesPanelProps {
   /** Rename to a typed name. Reject to show the error inline. */
   onRename: (item: PanelItem, name: string) => Promise<void>;
   onDelete: (item: PanelItem) => void;
-  /** The right-click menu for a note or folder. */
-  menuFor: (item: PanelItem) => MenuItem[];
+  /** The right-click menu for a note or folder; `extra` (Move up, …) goes after "Move to…". */
+  menuFor: (item: PanelItem, extra?: MenuItem[]) => MenuItem[];
   /** A note or folder dragged onto a folder (`""` is the top of the vault). */
   onDrop: (item: PanelItem, into: string) => void;
+  /** Arrange a folder by hand: its names in order (none: back to A to Z). `moving` comes from another folder first. */
+  onArrange: (folder: string, names: string[], moving?: PanelItem) => void;
   /** A paused sync's notes, listed on top until it finishes. */
   paused?: PausedNote[];
   findRef?: Ref<HTMLInputElement>;
@@ -51,6 +54,10 @@ interface RowContext {
   renaming: PanelItem | null;
   /** The folder a drag would drop into, highlighted. */
   dropTarget: string | null;
+  /** The row a drag would go above or below, marked with a line. */
+  dropAt: Place | null;
+  /** Alt+↑ / Alt+↓: one place up or down (not in Find results). */
+  onShift?: (item: PanelItem, by: -1 | 1) => void;
   onSelect: (path: string) => void;
   besidePath: string | null;
   onOpenBeside?: (path: string) => void;
@@ -72,16 +79,33 @@ function ancestorsOf(path: string): string[] {
 
 const placeName = (folder: string) => (folder ? folder.split("/").join(" · ") : "the top of the vault");
 
+/** A folder never goes inside itself. */
+const fitsIn = (item: PanelItem, into: string) => !item.folder || (into !== item.path && !into.startsWith(`${item.path}/`));
+
 /** Can `item` be dropped into `into`? Not where it already is, and a folder never into itself. */
 function canDrop(item: PanelItem, into: string): boolean {
-  if (into === folderOf(item.path)) return false;
-  return !item.folder || (into !== item.path && !into.startsWith(`${item.path}/`));
+  return into !== folderOf(item.path) && fitsIn(item, into);
+}
+
+/** Where a drag would land: into a folder, or above or below a row (`at`) in it. */
+interface DropTarget {
+  into: string;
+  at?: Place;
+}
+
+/** " to Projects", " below “Act I”", " to Story, above “Act I”": the end of the drag's label. */
+function dropText(item: PanelItem, target: DropTarget): string {
+  if (!target.at) return ` to ${placeName(target.into)}`;
+  const row = item.folder ? basename(target.at.path) : displayTitle(target.at.path);
+  const next = `${target.at.after ? "below" : "above"} “${row}”`;
+  return target.into === folderOf(item.path) ? ` ${next}` : ` to ${placeName(target.into)}, ${next}`;
 }
 
 /**
  * The vault as a table of contents: top-level folders are section headings,
  * deeper folders are indented sub-headings, notes are the entries. Notes and
- * folders can be renamed in place, right-clicked, and dragged onto folders.
+ * folders can be renamed in place, right-clicked, dragged onto folders, and
+ * arranged by hand (dragged between rows, or Alt+↑ / Alt+↓).
  */
 export default function NotesPanel({
   tree,
@@ -99,6 +123,7 @@ export default function NotesPanel({
   onDelete,
   menuFor,
   onDrop,
+  onArrange,
   paused,
   findRef,
   besidePath = null,
@@ -107,8 +132,20 @@ export default function NotesPanel({
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [menu, setMenu] = useState<{ item: PanelItem; anchor: MenuAnchor } | null>(null);
-  const [drag, setDrag] = useState<{ label: string; x: number; y: number; target: string | null } | null>(null);
+  const [drag, setDrag] = useState<{ item: PanelItem; label: string; x: number; y: number; target: DropTarget | null } | null>(null);
   const dragClick = useRef(false);
+  const treeRef = useRef(tree);
+  treeRef.current = tree;
+  const asideRef = useRef<HTMLElement>(null);
+  /** The row moved with Alt+↑ / Alt+↓, focused again once the list shows its new place. */
+  const refocus = useRef<string | null>(null);
+
+  useEffect(() => {
+    const path = refocus.current;
+    if (!path) return;
+    refocus.current = null;
+    asideRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(path)}"]`)?.focus();
+  }, [tree]);
 
   // Reveal the open note (or what's being renamed) by expanding its folders.
   const revealed = renaming?.path ?? selectedPath;
@@ -143,22 +180,44 @@ export default function NotesPanel({
     if (renaming && matches && (renaming.folder || !matches.includes(renaming.path))) setQuery("");
   }, [renaming, matches]);
 
-  /** Drag a row: past a few pixels it follows the pointer, and dropping on a folder (or a note in it) moves it there. */
+  /**
+   * Where `item` would land at this point. A note goes above or below another
+   * note; a folder above another folder's heading (its lower half means into
+   * it). Anywhere else on a folder, or on a note in it, moves it there. In
+   * Find results (notes from many folders) a drop only moves.
+   */
+  function dropTargetAt(item: PanelItem, el: Element | null, y: number, arranging: boolean): DropTarget | null {
+    const row = arranging ? el?.closest<HTMLElement>("[data-row]") : null;
+    const path = row?.dataset.row;
+    if (row && path !== undefined && (row.dataset.rowKind === "folder") === item.folder) {
+      const r = row.getBoundingClientRect();
+      const upper = y < r.top + r.height / 2;
+      if (!item.folder || upper) {
+        const into = folderOf(path);
+        const at = { path, after: !upper };
+        return fitsIn(item, into) && placeNames(treeRef.current, item, into, at) ? { into, at } : null;
+      }
+    }
+    const into = el?.closest<HTMLElement>("[data-drop-folder]")?.dataset.dropFolder;
+    return into !== undefined && canDrop(item, into) ? { into } : null;
+  }
+
+  /** Drag a row: past a few pixels it follows the pointer, and dropping puts it where `dropTargetAt` says. */
   function startDrag(item: PanelItem, e: ReactPointerEvent) {
     if (e.button !== 0 || renaming) return;
     const start = { x: e.clientX, y: e.clientY };
     const label = item.folder ? basename(item.path) : displayTitle(item.path);
+    const arranging = !matches;
     let active = false;
-    let target: string | null = null;
+    let target: DropTarget | null = null;
     const move = (ev: PointerEvent) => {
       if (!active) {
         if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 6) return;
         active = true;
         document.body.classList.add("cursor-grabbing");
       }
-      const into = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-drop-folder]")?.dataset.dropFolder;
-      target = into !== undefined && canDrop(item, into) ? into : null;
-      setDrag({ label, x: ev.clientX, y: ev.clientY, target });
+      target = dropTargetAt(item, document.elementFromPoint(ev.clientX, ev.clientY), ev.clientY, arranging);
+      setDrag({ item, label, x: ev.clientX, y: ev.clientY, target });
     };
     const finish = (drop: boolean) => {
       window.removeEventListener("pointermove", move);
@@ -169,7 +228,10 @@ export default function NotesPanel({
       if (!active) return;
       dragClick.current = true;
       setTimeout(() => (dragClick.current = false));
-      if (drop && target !== null) onDrop(item, target);
+      if (!drop || !target) return;
+      if (!target.at) return onDrop(item, target.into);
+      const names = placeNames(treeRef.current, item, target.into, target.at);
+      if (names) onArrange(target.into, names, item);
     };
     const up = () => finish(true);
     const key = (ev: globalThis.KeyboardEvent) => {
@@ -183,14 +245,36 @@ export default function NotesPanel({
     window.addEventListener("keydown", key, true);
   }
 
-  const rootNotes = tree.filter((n) => n.kind === "file");
-  const sections = tree.filter((n): n is DirNode => n.kind === "dir");
+  /** One place up or down among its kind in its folder. */
+  function shift(item: PanelItem, by: -1 | 1) {
+    const names = shiftNames(tree, item, by);
+    if (!names) return;
+    refocus.current = item.path;
+    onArrange(folderOf(item.path), names);
+  }
+
+  /** Move up, Move down, Sort A to Z (once arranged): for the right-click menu. A folder's Sort is for what's inside it. */
+  function arrangeItems(item: PanelItem): MenuItem[] {
+    if (matches) return [];
+    const sortable = item.folder ? item.path : folderOf(item.path);
+    const usual = usualOrder(tree, sortable);
+    const items: (MenuItem | false)[] = [
+      !!shiftNames(tree, item, -1) && { label: "Move up", hint: "Alt ↑", onSelect: () => shift(item, -1) },
+      !!shiftNames(tree, item, 1) && { label: "Move down", hint: "Alt ↓", onSelect: () => shift(item, 1) },
+      !!usual && { label: `Sort ${item.folder ? "contents " : ""}${usual}`, onSelect: () => onArrange(sortable, []) },
+    ];
+    return items.filter((m): m is MenuItem => !!m);
+  }
+
+  const { files: rootNotes, dirs: sections } = shown(tree, false);
 
   const ctx: RowContext = {
     selectedPath,
     changedPaths,
     renaming,
-    dropTarget: drag?.target ?? null,
+    dropTarget: drag?.target && !drag.target.at ? drag.target.into : null,
+    dropAt: drag?.target?.at ?? null,
+    onShift: matches ? undefined : shift,
     onSelect,
     besidePath,
     onOpenBeside,
@@ -216,7 +300,7 @@ export default function NotesPanel({
   }
 
   return (
-    <aside aria-label="Notes" className="flex w-64 shrink-0 flex-col gap-5 overflow-y-auto py-2.5 pr-5 pl-2 select-none">
+    <aside ref={asideRef} aria-label="Notes" className="flex w-64 shrink-0 flex-col gap-5 overflow-y-auto py-2.5 pr-5 pl-2 select-none">
       <label className="flex h-[34px] shrink-0 items-center gap-2 rounded-lg bg-hover px-2.5 text-ink-3">
         <SearchIcon className="size-3.5 shrink-0" />
         <input
@@ -313,7 +397,7 @@ export default function NotesPanel({
         <div
           data-drop-folder=""
           className={`shrink-0 rounded-md border border-dashed px-2.5 py-2 text-[12px] ${
-            drag.target === "" ? "border-accent bg-accent-soft text-accent" : "border-rule text-ink-3"
+            drag.target?.into === "" && !drag.target.at ? "border-accent bg-accent-soft text-accent" : "border-rule text-ink-3"
           }`}
         >
           Drop here for the top of the vault
@@ -336,7 +420,7 @@ export default function NotesPanel({
         <Menu
           anchor={menu.anchor}
           label={`${menu.item.folder ? basename(menu.item.path) : displayTitle(menu.item.path)} actions`}
-          items={menuFor(menu.item)}
+          items={menuFor(menu.item, arrangeItems(menu.item))}
           onClose={() => setMenu(null)}
         />
       )}
@@ -346,7 +430,7 @@ export default function NotesPanel({
           className="pointer-events-none fixed z-50 max-w-72 truncate rounded-md bg-tooltip px-2.5 py-1 text-[12px] text-on-tooltip shadow-lg"
           style={{ left: drag.x + 14, top: drag.y + 10 }}
         >
-          {drag.target === null ? `Move “${drag.label}”` : `Move “${drag.label}” to ${placeName(drag.target)}`}
+          {`Move “${drag.label}”${drag.target ? dropText(drag.item, drag.target) : ""}`}
         </div>
       )}
     </aside>
@@ -362,12 +446,27 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <div className="px-2.5 pb-1.5 text-[11px] font-semibold tracking-[0.12em] text-ink-3 uppercase">{children}</div>;
 }
 
-/** F2 renames, Delete deletes, the menu key (or Shift+F10) opens the menu: for a focused note or folder. */
+/** A line in the gap above or below a row, where a drag would put what it carries. */
+function DropLine({ after }: { after: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent ${after ? "-bottom-0.5" : "-top-0.5"}`}
+    />
+  );
+}
+
+/**
+ * F2 renames, Delete deletes, Alt+↑ / Alt+↓ move it, the menu key (or
+ * Shift+F10) opens the menu: for a focused note or folder.
+ */
 function rowKeys(item: PanelItem, ctx: RowContext) {
   return (e: KeyboardEvent<HTMLButtonElement>) => {
     const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
     if (e.key === "F2" && plain && !e.shiftKey) ctx.onStartRename(item);
     else if (e.key === "Delete" && plain && !e.shiftKey) ctx.onDelete(item);
+    else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && alt && ctx.onShift) ctx.onShift(item, e.key === "ArrowUp" ? -1 : 1);
     else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       const r = e.currentTarget.getBoundingClientRect();
       ctx.onMenu(item, { x: r.left + 12, y: r.bottom + 2 });
@@ -412,6 +511,8 @@ function FolderHeading({
       type="button"
       aria-expanded={open}
       data-drop-folder={dir.path}
+      data-row={dir.path}
+      data-row-kind="folder"
       title={dir.path}
       onClick={() => !ctx.consumeDragClick() && onToggle(dir.path)}
       onKeyDown={rowKeys(item, ctx)}
@@ -421,10 +522,11 @@ function FolderHeading({
         ctx.onMenu(item, { x: e.clientX, y: e.clientY });
       }}
       style={depth === 0 ? undefined : { paddingLeft: indent + 12 }}
-      className={`group flex items-center justify-between rounded-md text-left ${
+      className={`group relative flex items-center justify-between rounded-md text-left ${
         depth === 0 ? "px-2.5 pt-1 pb-1.5 text-[11px] font-semibold tracking-[0.12em] uppercase" : "pt-2.5 pr-2.5 pb-1 text-xs"
       } ${target ? "bg-accent-soft text-accent" : "text-ink-3 hover:text-ink"}`}
     >
+      {ctx.dropAt?.path === dir.path && <DropLine after={false} />}
       <span className="truncate">{dir.name}</span>
       <Chevron open={open} />
     </button>
@@ -442,11 +544,8 @@ interface FolderProps {
 /** A folder's notes first, then its sub-folders as indented sub-headings. */
 function Folder({ dir, depth, collapsed, onToggle, ctx }: FolderProps) {
   const indent = 10 + depth * 12;
-  // Daily notes newest first; everything else keeps the vault order.
-  const files = dir.children
-    .filter((n) => n.kind === "file")
-    .sort((a, b) => (dailyDateOf(b.path)?.getTime() ?? 0) - (dailyDateOf(a.path)?.getTime() ?? 0));
-  const subdirs = dir.children.filter((n): n is DirNode => n.kind === "dir");
+  // Daily notes newest first, unless the folder was arranged by hand; everything else keeps the vault order.
+  const { files, dirs: subdirs } = shown(dir.children, !dir.ordered);
   return (
     <>
       {files.map((node) => (
@@ -481,6 +580,8 @@ function NoteRow({ path, indent = 10, hint, ctx }: { path: string; indent?: numb
       type="button"
       aria-current={selected ? "page" : undefined}
       data-drop-folder={folderOf(path)}
+      data-row={path}
+      data-row-kind="note"
       onClick={(e) => {
         if (ctx.consumeDragClick()) return;
         if ((e.ctrlKey || e.metaKey) && ctx.onOpenBeside) ctx.onOpenBeside(path);
@@ -494,10 +595,11 @@ function NoteRow({ path, indent = 10, hint, ctx }: { path: string; indent?: numb
       }}
       title={path}
       style={{ paddingLeft: indent }}
-      className={`flex min-h-[30px] items-center justify-between gap-2 rounded-md pr-2.5 text-left ${
+      className={`relative flex min-h-[30px] items-center justify-between gap-2 rounded-md pr-2.5 text-left ${
         selected ? "bg-hover font-medium text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"
       }`}
     >
+      {ctx.dropAt?.path === path && <DropLine after={ctx.dropAt.after} />}
       <span className="flex min-w-0 flex-col py-1">
         <span className="truncate">{displayTitle(path)}</span>
         {hint && <span className="truncate text-xs font-normal text-ink-3">{hint}</span>}

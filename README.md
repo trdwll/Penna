@@ -31,7 +31,8 @@ link to it. Nothing installs itself. Turn the check off in Settings → General.
 - **Daily notes and templates**, with unfinished tasks carried over to the next day.
 - **History and sync**: see what changed since your last version, restore old text, and sync with any Git remote.
   When two devices edit the same lines, you choose what to keep.
-- **Organize** by renaming and moving notes and folders; links across the vault update themselves.
+- **Organize** by renaming and moving notes and folders; links across the vault update themselves. Notes and
+  folders are listed A to Z until you drag them into your own order (Alt+↑ / Alt+↓ work too).
 - **Two notes side by side**, and **export** to HTML or PDF.
 
 ## Keyboard

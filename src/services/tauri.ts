@@ -23,6 +23,8 @@ export interface DirNode {
   /** Vault-relative, `/`-separated, e.g. `Projects/2026`. */
   path: string;
   children: TreeNode[];
+  /** Its notes and subfolders were arranged by hand (see `setOrder`). */
+  ordered: boolean;
 }
 
 export interface FileNode {
@@ -292,6 +294,7 @@ interface Commands {
   rename_folder: { args: { from: string; to: string }; result: RenameOutcome };
   delete_folder: { args: { path: string }; result: void };
   folder_contents: { args: { path: string }; result: FolderContents };
+  set_order: { args: { folder: string; names: string[] }; result: void };
   list_attachments: { args: NoArgs; result: string[] };
   /** Sent with a raw body; see `saveAttachment`. */
   save_attachment: { args: NoArgs; result: string };
@@ -394,6 +397,8 @@ export const renameFolder = (from: string, to: string) => call("rename_folder", 
 /** Move a folder and everything in it to the Recycle Bin. */
 export const deleteFolder = (path: string) => call("delete_folder", { path });
 export const folderContents = (path: string) => call("folder_contents", { path });
+/** Arrange a folder's notes and subfolders by hand (`""` is the top of the vault). No names: back to A to Z. */
+export const setOrder = (folder: string, names: string[]) => call("set_order", { folder, names });
 /** Every file in the vault that isn't a note (images, PDFs, …). */
 export const listAttachments = () => call("list_attachments");
 /** Copy files from elsewhere into the vault for a note (files already in the vault stay put). Resolves to vault paths. */

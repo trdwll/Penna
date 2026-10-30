@@ -11,6 +11,7 @@ mod export;
 mod git;
 mod links;
 mod mentions;
+mod order;
 mod search;
 mod tags;
 mod vault;
@@ -182,6 +183,19 @@ async fn delete_folder(path: String, state: State<'_, AppState>) -> CmdResult<()
     let root = state.root()?;
     let _guard = state.git_lock.lock().await;
     blocking(move || vault::delete_folder(&root, &path)).await
+}
+
+/// Arrange a folder's notes and subfolders by hand (`""` is the top of the
+/// vault). No names puts it back to A to Z.
+#[tauri::command]
+async fn set_order(
+    folder: String,
+    names: Vec<String>,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    let root = state.root()?;
+    let _guard = state.git_lock.lock().await;
+    blocking(move || order::set(&root, &folder, names)).await
 }
 
 /// How many notes and other files a folder holds (for the delete confirmation).
@@ -716,6 +730,7 @@ pub fn run() {
             rename_folder,
             delete_folder,
             folder_contents,
+            set_order,
             list_attachments,
             save_attachment,
             import_attachments,

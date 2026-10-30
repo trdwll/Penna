@@ -57,6 +57,7 @@ const SHORTCUTS: [string, string][] = [
   ["Highlight", "Ctrl Shift H"],
   ["Move a block up / down", "Ctrl Shift ↑ / ↓"],
   ["Rename the note", "F2"],
+  ["Move a note up / down in the list", "Alt ↑ / ↓"],
   ["Insert menu", "/"],
   ["Link to a note", "[["],
 ];

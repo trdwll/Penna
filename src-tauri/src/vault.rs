@@ -20,14 +20,14 @@ use serde::Serialize;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::error::{AppError, AppResult, IoContext};
-use crate::links;
+use crate::{links, order};
 
 /// File extensions treated as notes.
 pub const NOTE_EXTENSIONS: &[&str] = &["md", "markdown"];
 
 /// A node in the vault tree. Serialises as a tagged union so TypeScript can
 /// narrow on `kind`:
-/// `{ kind: "dir", name, path, children }` | `{ kind: "file", name, path }`.
+/// `{ kind: "dir", name, path, children, ordered }` | `{ kind: "file", name, path }`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum TreeNode {
@@ -35,6 +35,8 @@ pub enum TreeNode {
         name: String,
         path: String,
         children: Vec<TreeNode>,
+        /// Its contents were arranged by hand (see `order`).
+        ordered: bool,
     },
     File {
         name: String,
@@ -145,12 +147,13 @@ impl DirBuilder {
             name: self.name,
             path: self.path,
             children: self.children,
+            ordered: false,
         }
     }
 }
 
-/// Folders first, then case-insensitive by name. This is the order the
-/// sidebar shows.
+/// Folders first, then case-insensitive by name: the order the sidebar shows
+/// until a folder is arranged by hand (`order::apply`).
 fn sort_entries(a: &DirEntry, b: &DirEntry) -> Ordering {
     let a_dir = a.file_type().is_dir();
     let b_dir = b.file_type().is_dir();
@@ -217,7 +220,9 @@ pub fn scan_tree(root: &Path) -> AppResult<Vec<TreeNode>> {
     }
 
     close_dirs(&mut stack, 1);
-    Ok(stack.pop().map(|root| root.children).unwrap_or_default())
+    let mut tree = stack.pop().map(|root| root.children).unwrap_or_default();
+    order::apply(&mut tree, &order::read(root));
+    Ok(tree)
 }
 
 /// Pop directories until `stack.len() == depth`, attaching each to its parent.
@@ -279,7 +284,7 @@ pub fn write_note(root: &Path, rel: &str, content: &str) -> AppResult<i64> {
 
 /// Temp file + flush + rename, so readers see the old or the new content,
 /// never a half-written file.
-fn write_atomic(path: &Path, content: &str) -> AppResult<()> {
+pub(crate) fn write_atomic(path: &Path, content: &str) -> AppResult<()> {
     let parent = path.parent().ok_or_else(|| AppError::InvalidPath {
         path: path.display().to_string(),
         reason: "path has no parent folder",
@@ -568,14 +573,30 @@ pub fn rename_note(root: &Path, from: &str, to: &str) -> AppResult<RenameOutcome
     }
     let moves = HashMap::from([(from.clone(), to.clone())]);
     let names = (links::stem(&from).to_owned(), links::stem(&to).to_owned());
-    move_and_relink(
+    let outcome = move_and_relink(
         root,
         &from_abs,
         &to_abs,
         to.clone(),
         moves,
         Some((&names.0, &names.1)),
-    )
+    )?;
+    keep_place(root, &from, &to);
+    Ok(outcome)
+}
+
+/// A renamed note or folder keeps its place in a hand-arranged folder. The
+/// move already happened, so a failure here is only logged.
+fn keep_place(root: &Path, from: &str, to: &str) {
+    if let Err(err) = order::moved(root, from, to) {
+        eprintln!("[order] couldn't update the order after moving '{from}': {err}");
+    }
+}
+
+fn forget_place(root: &Path, rel: &str) {
+    if let Err(err) = order::removed(root, rel) {
+        eprintln!("[order] couldn't update the order after deleting '{rel}': {err}");
+    }
 }
 
 /// Rename or move a folder with everything in it, rewriting links to the
@@ -616,7 +637,9 @@ pub fn rename_folder(root: &Path, from: &str, to: &str) -> AppResult<RenameOutco
                 .map(|rest| (p.clone(), format!("{to}/{rest}")))
         })
         .collect();
-    move_and_relink(root, &from_abs, &to_abs, to.clone(), moves, None)
+    let outcome = move_and_relink(root, &from_abs, &to_abs, to.clone(), moves, None)?;
+    keep_place(root, &from, &to);
+    Ok(outcome)
 }
 
 /// An image or other file (not a note), checked: it must exist.
@@ -718,6 +741,7 @@ pub fn delete_note(root: &Path, rel: &str) -> AppResult<()> {
     }
     trash::delete(&path).map_err(|err| AppError::Trash(rel.to_owned(), err.to_string()))?;
     remove_empty_dirs(root, path.parent());
+    forget_place(root, rel);
     Ok(())
 }
 
@@ -729,6 +753,7 @@ pub fn delete_folder(root: &Path, rel: &str) -> AppResult<()> {
     }
     trash::delete(&path).map_err(|err| AppError::Trash(rel.to_owned(), err.to_string()))?;
     remove_empty_dirs(root, path.parent());
+    forget_place(root, rel);
     Ok(())
 }
 
